@@ -1,4 +1,4 @@
-# main.py - Auto File Renamer (Final Pro Version)
+# main.py - Auto File Renamer (Final Pro Version + Master Move)
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -12,6 +12,7 @@ from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import re
+import zipfile 
 import webbrowser
 import requests
 import sys
@@ -26,8 +27,8 @@ if getattr(sys, 'frozen', False):
     project_dir = Path(sys.executable).parent
 else:
     project_dir = Path(__file__).parent
-    SOUND_FILE = project_dir / "sounds" / "ding.wav"
 
+SOUND_FILE = project_dir / "sounds" / "ding.wav"
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and PyInstaller"""
@@ -74,9 +75,9 @@ SMALL_FONT = ("Segoe UI", 10)
 
 # ============ Version Info ============
 APP_NAME = "Auto File Renamer Pro"
-VERSION = "2.0.0"
+VERSION = "2.2.0"  # Updated Version
 AUTHOR = "Jignesh Thummar"
-COPYRIGHT = "© 2025 Jignesh Thummar. All Rights Reserved. V2.0.0"
+COPYRIGHT = "© 2025-26 Jignesh Thummar. All Rights Reserved. V2.2.0"
 LICENSE = "Proprietary Software. Do not distribute."
 
 class RenameHistory:
@@ -112,21 +113,22 @@ class RenameHistory:
 
     def count_renamed_in_done(self, root):
         done_count = 0
-        for item in self.history:  # ✅ Correct — matches your actual variable
+        for item in self.history:
             if "Done" in str(item["new"]) or str(root) in str(item["new"]):
                 done_count += 1
         return done_count
-
 
 class FileRenamerApp(ctk.CTk):
     class AutoScanHandler(FileSystemEventHandler):
         def __init__(self, app):
             self.app = app
+
         def on_created(self, event):
             if not event.is_directory:
                 ext = Path(event.src_path).suffix.lower()
                 if ext in self.app.allowed_extensions:
-                    self.app.after(0, self.app.scan_folder)    
+                    self.app.after(0, self.app.scan_folder)
+
     def __init__(self):
         super().__init__()
         # Set window and taskbar icon
@@ -138,14 +140,15 @@ class FileRenamerApp(ctk.CTk):
                 print("Icon file not found:", icon_path)
         except Exception as e:
             print("Icon error:", e)
+
         self.title(f"{APP_NAME} v{VERSION}")
         self.geometry("1000x780")
         self.resizable(True, True)
 
         # ============ Version & Auto-Update ============
-        self.CURRENT_VERSION = "1.6.0"
+        self.CURRENT_VERSION = "2.2.0"
         self.UPDATE_URL = "https://raw.githubusercontent.com/jigsthummar007/AutoFileRenamer-Pro/main/version.txt"
-        
+
         # --- Paths ---
         self.config_file = project_dir / "config.json"
 
@@ -160,6 +163,8 @@ class FileRenamerApp(ctk.CTk):
         self.filtered_file_list = []  # For search
         self.machine_var = ctk.StringVar(value="(C.S)")
         self.show_done_var = ctk.BooleanVar(value=False)
+        self.master_move_var = ctk.BooleanVar(value=False)  # ✅ New Mode Variable
+        self.master_move_history = []
         self.last_folder = ""
         self.quantity_keywords = []
         self.first_run = True
@@ -168,10 +173,9 @@ class FileRenamerApp(ctk.CTk):
         self.load_config()
         self.load_keywords()
 
-
-
         # --- Menu Bar ---
         self.create_menu_bar()
+
         # Window close handler
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -185,11 +189,11 @@ class FileRenamerApp(ctk.CTk):
 
         # ============ Sidebar ============
         self.sidebar_frame = ctk.CTkFrame(self, width=260, corner_radius=12, fg_color="#2a2d30")
-        self.sidebar_frame.grid(row=0, column=0, rowspan=8, sticky="nswe", padx=14, pady=14)  # Increased padding
+        self.sidebar_frame.grid(row=0, column=0, rowspan=8, sticky="nswe", padx=14, pady=14)
         self.sidebar_frame.grid_propagate(False)
 
         # Add internal padding at top
-        ctk.CTkLabel(self.sidebar_frame, text="").pack(pady=(0, 2))  # Top spacer        
+        ctk.CTkLabel(self.sidebar_frame, text="").pack(pady=(0, 2))
         ctk.CTkLabel(self.sidebar_frame, text="📁 File Manager", font=TITLE_FONT).pack(pady=(12, 8))
 
         # --- Logo Image ---
@@ -200,7 +204,7 @@ class FileRenamerApp(ctk.CTk):
                 logo_image = ctk.CTkImage(
                     light_image=Image.open(logo_path),
                     dark_image=Image.open(logo_path),
-                    size=(130, 60)  # Width, Height
+                    size=(130, 60)
                 )
                 self.logo_label = ctk.CTkLabel(
                     self.sidebar_frame,
@@ -209,7 +213,6 @@ class FileRenamerApp(ctk.CTk):
                 )
                 self.logo_label.pack(pady=(0, 10))
             else:
-                # Fallback: Text label if logo not found
                 ctk.CTkLabel(
                     self.sidebar_frame,
                     text="Auto File Renamer Pro",
@@ -217,7 +220,6 @@ class FileRenamerApp(ctk.CTk):
                     text_color="gray70"
                 ).pack(pady=(0, 10))
         except Exception as e:
-            # If PIL or file error, skip logo
             pass
 
         self.folder_btn = ctk.CTkButton(
@@ -248,7 +250,7 @@ class FileRenamerApp(ctk.CTk):
         )
         self.auto_scan_switch.pack(pady=12, padx=16, anchor="w")
 
-        # --- Show Done Files ---
+        # --- Show Done Files (Finalize Mode) ---
         self.show_done_switch = ctk.CTkSwitch(
             self.sidebar_frame,
             text="👁️ Show Finalize Files",
@@ -257,6 +259,17 @@ class FileRenamerApp(ctk.CTk):
             font=FONT
         )
         self.show_done_switch.pack(pady=10, padx=16, anchor="w")
+
+        # --- Master Move Mode (NEW) ---
+        self.master_move_switch = ctk.CTkSwitch(
+            self.sidebar_frame,
+            text="📦 Master Move Mode",
+            variable=self.master_move_var,
+            command=self.on_master_move_mode_change,
+            font=FONT,
+            fg_color="#d48800"  # Distinct color
+        )
+        self.master_move_switch.pack(pady=10, padx=16, anchor="w")
 
         # --- Machine Type ---
         ctk.CTkLabel(self.sidebar_frame, text="🖨️ Machine:", font=FONT).pack(pady=(14, 4), anchor="w", padx=20)
@@ -313,9 +326,31 @@ class FileRenamerApp(ctk.CTk):
         )
         self.export_log_btn.pack(pady=10, padx=16, fill="x")
 
+        # --- ✅ NEW: Export Config Button ---
+        self.export_config_btn = ctk.CTkButton(
+            self.sidebar_frame,
+            text="💾 Export(Keywords & Parties)",
+            command=self.export_config,
+            fg_color="#28a745",
+            hover_color="#1e7e34",
+            height=32
+        )
+        self.export_config_btn.pack(pady=10, padx=16, fill="x")
+
+        # --- ✅ NEW: Import Config Button ---
+        self.import_config_btn = ctk.CTkButton(
+            self.sidebar_frame,
+            text="📥 Import(Keywords & Parties)",
+            command=self.import_config,
+            fg_color="#007bff",
+            hover_color="#0056b3",
+            height=32
+        )
+        self.import_config_btn.pack(pady=10, padx=16, fill="x")
+
         # ============ Main Area ============
-        self.main_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="transparent")  # Optional: match background
-        self.main_frame.grid(row=0, column=1, sticky="nswe", padx=14, pady=14)  # Match sidebar
+        self.main_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="transparent")
+        self.main_frame.grid(row=0, column=1, sticky="nswe", padx=14, pady=14)
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(3, weight=1)
 
@@ -324,7 +359,7 @@ class FileRenamerApp(ctk.CTk):
         search_frame.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 5))
         ctk.CTkLabel(search_frame, text="🔍 Search:", font=FONT).pack(side="left")
         self.search_var = ctk.StringVar()
-        self.search_var.trace("w", self.on_search_change)
+        self.search_var.trace_add("write", self.on_search_change)
         self.search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var, placeholder_text="Filter files...")
         self.search_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
 
@@ -420,8 +455,8 @@ class FileRenamerApp(ctk.CTk):
             command=self.select_all_files,
             fg_color="#008800",
             hover_color="#006600",
-            width=120,           # Match Batch Rename width
-            height=32,           # Match top button height
+            width=120,
+            height=32,
             font=("Segoe UI", 14)
         )
         self.select_all_btn.grid(row=0, column=4, padx=(12, 6))
@@ -438,13 +473,39 @@ class FileRenamerApp(ctk.CTk):
         )
         self.undo_all_btn.grid(row=0, column=5, padx=(0, 0))
 
+        # ✅ Master Move Button (NEW)
+        self.master_move_btn = ctk.CTkButton(
+            btn_frame,
+            text="📦 Move to Master Done",
+            command=self.move_to_master_done,
+            fg_color="#d48800",
+            hover_color="#b06e00",
+            width=200,
+            height=32,
+            font=("Segoe UI", 14, "bold")
+        )
+        # Initially hidden
+        self.master_move_btn.grid(row=0, column=3, columnspan=2, padx=(12, 6)) 
+
+        self.undo_master_move_btn = ctk.CTkButton(
+            btn_frame,
+            text="↩ Undo Move",
+            command=self.undo_master_move,
+            fg_color="#cc3333",
+            hover_color="#992222",
+            width=120,
+            height=32,
+            font=("Segoe UI", 14)
+        )
+        self.undo_master_move_btn.grid(row=0, column=5, padx=(0, 0))
+
         # - File List: Use tk.Text for tag support -
         self.file_listbox = tk.Text(
             self.main_frame,
             font=("Consolas", 12),
             wrap="none",
-            bg="#2a2d30",           # Dark background
-            fg="lightgray",         # Light gray text
+            bg="#2a2d30",
+            fg="lightgray",
             insertbackground="white",
             selectbackground="#1f538d",
             selectforeground="white",
@@ -464,20 +525,17 @@ class FileRenamerApp(ctk.CTk):
         self.file_listbox.tag_configure("selected", background="#1f538d", foreground="white")
         self.file_listbox.tag_configure("normal", foreground="lightgray")
 
-        
-     
-        # - Auto-Scrolling Bulletin (One Tip at a Time) -
+        # - Auto-Scrolling Bulletin -
         self.bulletin_messages = [
             "💡 Tip: Press Ctrl+A to batch rename all files",
             "💡 Tip: Click any file to preview rename",
             "💡 Tip: Edit keywords for 'x2', 'copy', 'pcs'",
-            "✅ Tip: Dont Forget to Chnage Eco & Solvant Mode Before Rename",
-            "💡 Tip: You can mage Party and Code. Click Manage Party Button",
+            "✅ Tip: Dont Forget to Change Eco & Solvant Mode Before Rename",
+            "💡 Tip: You can manage Party and Code. Click Manage Party Button",
             "✅ Renamed files go to the 'Done' folder",
-            "🔔 Press F1 for help anytime!"
+            "🔔 Press F1 for help anytime!",
+            "📦 Master Move: Consolidate all Done files to one place!"
         ]
-
-        # Add Easter Egg messages
         self.bulletin_messages.extend([
             "🎉 Wow! All files renamed! You're on fire!",
             "🚀 Auto File Renamer Pro loves you!",
@@ -485,12 +543,11 @@ class FileRenamerApp(ctk.CTk):
             "💡 Pro Tip: You're awesome at this!",
             "🏆 Achievement Unlocked: Batch Master!"
         ])
-
         self.current_msg_index = 0
         self.bulletin_offset = 0
         self.is_scrolling = True
 
-        # - Bulletin Container (Force Left Alignment) -
+        # - Bulletin Container -
         bulletin_container = ctk.CTkFrame(
             self.main_frame,
             fg_color="gray20",
@@ -502,7 +559,7 @@ class FileRenamerApp(ctk.CTk):
         bulletin_container.grid_rowconfigure(0, weight=1)
         bulletin_container.grid_columnconfigure(0, weight=1)
 
-        # - Bulletin Label (Left-aligned via pack) -
+        # - Bulletin Label -
         self.bulletin_label = ctk.CTkLabel(
             bulletin_container,
             text="",
@@ -513,7 +570,6 @@ class FileRenamerApp(ctk.CTk):
         )
         self.bulletin_label.pack(side="left", padx=0, pady=0, anchor="w")
 
-        # Start scrolling
         self.after(500, self.scroll_bulletin)
 
         # --- Status Bar ---
@@ -526,34 +582,27 @@ class FileRenamerApp(ctk.CTk):
         )
         self.status_label.grid(row=8, column=0, columnspan=2, sticky="we", padx=18, pady=5)
 
-        # --- Math Input (Below Bulletin, Same Width) ---
+        # --- Math Input ---
         math_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent", height=32)
         math_frame.grid(row=7, column=0, columnspan=2, sticky="we", padx=10, pady=(6, 8))
         math_frame.grid_propagate(False)
-
-        # Icon + Entry
         ctk.CTkLabel(math_frame, text="🧮", font=("Segoe UI", 13)).pack(side="left", padx=(0, 8))
-
         self.math_entry = ctk.CTkEntry(
             math_frame,
             placeholder_text="Math: 30*2+10",
             height=28,
             font=("Segoe UI", 11),
-            width=300  # Adjust if needed
+            width=300
         )
         self.math_entry.pack(side="left", fill="x", expand=True)
-
-        # Bind Enter
         self.math_entry.bind("<Return>", self.calculate_math)
 
-        # - Redesigned Footer (Row 9) -
+        # - Redesigned Footer -
         footer_frame = ctk.CTkFrame(self, fg_color="transparent")
         footer_frame.grid(row=9, column=0, columnspan=2, pady=(0, 6), sticky="we", padx=18)
-
-        # Use grid inside footer_frame for precise control
-        footer_frame.grid_columnconfigure(0, weight=1)  # Left
-        footer_frame.grid_columnconfigure(1, weight=2)  # Center
-        footer_frame.grid_columnconfigure(2, weight=1)  # Right
+        footer_frame.grid_columnconfigure(0, weight=1)
+        footer_frame.grid_columnconfigure(1, weight=2)
+        footer_frame.grid_columnconfigure(2, weight=1)
 
         # --- Left: Info Label ---
         self.info_label = ctk.CTkLabel(
@@ -577,8 +626,6 @@ class FileRenamerApp(ctk.CTk):
         # --- Right: Contact Icons ---
         contact_frame = ctk.CTkFrame(footer_frame, fg_color="transparent")
         contact_frame.grid(row=0, column=2, sticky="e")
-
-        # WhatsApp
         ctk.CTkButton(
             contact_frame,
             text="📞",
@@ -589,8 +636,6 @@ class FileRenamerApp(ctk.CTk):
             hover_color="gray50",
             command=lambda: webbrowser.open("https://wa.me/919825531314")
         ).pack(side="left", padx=(0, 6))
-
-        # Instagram
         ctk.CTkButton(
             contact_frame,
             text="📸",
@@ -601,8 +646,6 @@ class FileRenamerApp(ctk.CTk):
             hover_color="gray50",
             command=lambda: webbrowser.open("https://instagram.com/official.jignesh.1")
         ).pack(side="left", padx=(0, 6))
-
-        # Email
         ctk.CTkButton(
             contact_frame,
             text="📧",
@@ -624,7 +667,6 @@ class FileRenamerApp(ctk.CTk):
 
         # Hide main window until splash is gone
         self.withdraw()
-
         # Show splash
         self.show_splash_screen()
 
@@ -636,50 +678,58 @@ class FileRenamerApp(ctk.CTk):
             self.selected_root = Path(self.last_folder)
             self.scan_folder()
             self.start_auto_scan()
-
+        
         self.load_parties_csv()
         self.update_info_bar()
 
-        # --- Create Backup (must come after status_label is created)
+        # --- Create Backup ---
         self.create_backup()
         self.update_info_bar()
-        
+
         # Initial button visibility
         self.update_button_visibility()
+
+    def on_master_move_mode_change(self):
+        """Called when 'Master Move Mode' is toggled"""
+        if self.master_move_var.get():
+            # Disable Finalize Mode to avoid conflict
+            self.show_done_var.set(False) 
+            self.status_label.configure(text="📦 Master Move Mode Active")
+        else:
+            self.status_label.configure(text="Ready")
+    
+        self.scan_folder()
+        self.update_button_visibility()
+        self.update_folder_path_display()
 
     def test_rename(self):
         """Show what the selected file would be renamed to — without doing anything"""
         if not self.selected_file or not self.selected_file.exists():
             self.status_label.configure(text="❌ No file selected")
             return
-
         file_path = self.selected_file
         party_folder = self.find_party_folder(file_path)
         if not party_folder:
             self.status_label.configure(text="❌ No party folder found")
             return
 
-        # Find original party name (case-sensitive from CSV)
         original_party_name = next(
             (name for name in self.party_map if name.lower() == party_folder.name.lower()),
             party_folder.name
         )
         party_code = self.party_map.get(original_party_name, "?")
-
-        # Get parts
         stem = file_path.stem
         ext = file_path.suffix
         dim_str = self.extract_dimensions(stem)
         new_name = self.generate_new_filename(stem, party_code, ext, dim_str)
 
-        # Show result
         msg = (
             f"📄 Selected File:\n{file_path.name}\n\n"
             f"🔢 Would Be Renamed To:\n{new_name}\n\n"
             f"🏷️ Party: {original_party_name} ({party_code})\n"
             f"🖨️ Machine: {self.machine_var.get()}\n"
             f"📐 Dimensions: {dim_str}\n"
-            f"📦 Quantity: {self.detect_quantity(stem)}\n\n"
+            f"📦 Quantity: {self.detect_quantity(stem)}\n"
             f"✅ This is just a preview. No file was changed."
         )
         messagebox.showinfo("🔍 Test Mode: Rename Preview", msg)
@@ -687,13 +737,10 @@ class FileRenamerApp(ctk.CTk):
 
     def update_folder_path_display(self):
         """Update folder path label with clean formatting — only in Normal Mode"""
-        if not self.show_done_var.get() and self.selected_root:
-            # Get parts of the path
+        if not self.show_done_var.get() and not self.master_move_var.get() and self.selected_root:
             parts = self.selected_root.parts
-            # Show last 4 parts
             display_parts = []
             for part in parts[-4:]:
-                # Clean up common issues
                 if part.lower() == "05 may":
                     part = "May"
                 elif part.lower() == "01-6":
@@ -701,23 +748,22 @@ class FileRenamerApp(ctk.CTk):
                 elif part.lower() == "gatam cmrk":
                     part = "Gatam CMYK"
                 else:
-                    part = part.replace("_", " ")  # Replace underscores
+                    part = part.replace("_", " ")
                 display_parts.append(part)
             display_text = " > ".join(display_parts)
             self.folder_path_label.configure(text=f"📍 Folder: {display_text}")
-            self.folder_path_label.grid()  # Ensure visible
+            self.folder_path_label.grid()
         else:
-            self.folder_path_label.grid_remove()  # Hide in Finalize Mode
+            self.folder_path_label.grid_remove()
 
     def update_info_bar(self):
-        """Update the persistent info bar with current stats and force color"""
+        """Update the persistent info bar with current stats"""
         total = len(self.file_path_list)
         renamed = self.history.count_renamed_in_done(self.selected_root) if self.selected_root else 0
         pending = total - renamed
         last_time = datetime.now().strftime("%H:%M")
         num_parties = len(self.party_map)
 
-        # Count finalized files (with [ok])
         finalized = 0
         if self.selected_root:
             for file_path in self.selected_root.rglob("*[ok]*"):
@@ -726,6 +772,11 @@ class FileRenamerApp(ctk.CTk):
 
         machine = self.machine_var.get()
         auto_status = "ON" if self.auto_scan_var.get() else "OFF"
+        
+        # Master Move Stats
+        master_move_count = 0
+        if self.master_move_var.get():
+            master_move_count = total
 
         info_text = (
             f"📁 Files: {total} | "
@@ -737,19 +788,23 @@ class FileRenamerApp(ctk.CTk):
             f"🕒 {last_time} | "
             f"📄 Parties: {num_parties}"
         )
+        
+        if self.master_move_var.get():
+            info_text += f" | 📦 Master Move: {total} (Finalized)"
+            text_color = "#d48800"
 
-        # --- Force Strong Colors ---
-        if pending == 0 and total > 0:
-            text_color = "#4cd964"  # Apple-style green
-        elif pending > 0:
-            text_color = "#ffcc00"  # Soft yellow (not white)
+        if pending == 0 and total > 0 and not self.master_move_var.get():
+            text_color = "#4cd964"
+        elif pending > 0 and not self.master_move_var.get():
+            text_color = "#ffcc00"
+        elif self.master_move_var.get():
+            text_color = "#d48800"  # Orange for Master Move
         else:
-            text_color = "#8e8e93"  # iOS-style gray
+            text_color = "#8e8e93"
 
-        # ✅ Force update with text_color
         self.info_label.configure(
             text=info_text,
-            text_color=text_color  # This will now work
+            text_color=text_color
         )
 
     def show_splash_screen(self):
@@ -757,143 +812,108 @@ class FileRenamerApp(ctk.CTk):
         splash = ctk.CTkToplevel(self)
         splash.overrideredirect(True)
         splash.configure(fg_color="white")
-    
-        # 🔧 Define image_path here
         image_path = resource_path("splash.gif")
-    
         try:
             from PIL import Image, ImageTk
-        
-            # Check if file exists
             if not image_path.exists():
                 raise FileNotFoundError(f"Splash image not found: {image_path}")
-        
-            # Load and prepare GIF
             gif = Image.open(image_path)
             frames = []
-        
-            # Extract all frames
             try:
                 frame_index = 0
                 while True:
-                    # Convert frame to RGB (or RGBA) to support transparency/colors
                     frame = gif.copy().convert("RGBA")
-                    # Resize for display
                     resized_frame = frame.resize((500, 300), Image.Resampling.LANCZOS)
-                    # Convert to Tkinter-compatible PhotoImage
                     photo_image = ImageTk.PhotoImage(resized_frame)
                     frames.append(photo_image)
-                
                     frame_index += 1
-                    gif.seek(frame_index)  # Go to next frame
-                
+                    gif.seek(frame_index)
             except EOFError:
-                pass  # End of frames reached
-        
+                pass
             if not frames:
                 raise Exception("No frames loaded from GIF")
-        
-            # Create label to hold image
             img_label = ctk.CTkLabel(splash, text="")
             img_label.pack(expand=True)
-        
-            # Animation loop
             def animate_gif(frame_idx=0):
                 img_label.configure(image=frames[frame_idx])
-                splash.after(100, animate_gif, (frame_idx + 1) % len(frames))  # Loop continuously
-        
+                splash.after(100, animate_gif, (frame_idx + 1) % len(frames))
             animate_gif()
-        
         except Exception as e:
-            # Fallback: Show text if GIF fails
             ctk.CTkLabel(splash, text="Auto File Renamer", font=("Helvetica", 24, "bold")).pack(pady=40)
             ctk.CTkLabel(splash, text="Loading...", font=("Helvetica", 16)).pack()
 
-        # Center splash
         splash.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - (500 // 2)
         y = (self.winfo_screenheight() // 2) - (300 // 2)
         splash.geometry(f"500x300+{int(x)}+{int(y)}")
-
-        # Store reference and schedule close
         self.splash = splash
-        self.after(4000, self.destroy_splash)  # Show splash for 4 seconds
+        self.after(4000, self.destroy_splash)
 
     def destroy_splash(self):
         """Close splash and show main app"""
         if hasattr(self, 'splash'):
             self.splash.destroy()
-
         try:
-            # Now safe to load data and start
             self.load_config()
             self.load_keywords()
-            self.load_parties_csv()  # May crash if CSV is missing
+            self.load_parties_csv()
             self.toggle_auto_scan()
-
             if self.last_folder and Path(self.last_folder).exists():
                 self.selected_root = Path(self.last_folder)
                 self.scan_folder()
                 self.start_auto_scan()
-
-            self.update_info_bar()
-            self.create_backup()
-            self.check_for_update()  # Optional: check after startup
-
-            # ✅ Must be last: show window
-            self.deiconify()  # Show main window
-            self.lift()
-            self.focus_force()
-
+                self.update_info_bar()
+                self.create_backup()
+                self.check_for_update()
+                self.deiconify()
+                self.lift()
+                self.focus_force()
         except Exception as e:
-            # ✅ Show error even if window was hidden
             import tkinter.messagebox as mbox
             mbox.showerror("Startup Error", f"Failed to start:\n{e}")
-            self.destroy()  # Close app
+            self.destroy()
 
     def on_finalize_mode_change(self):
         """Called when 'Show Finalize Files' is toggled"""
+        if self.show_done_var.get():
+            # Disable Master Move if Finalize is on
+            self.master_move_var.set(False)
+            self.status_label.configure(text="👁️ Finalize Mode Active")
+        else:
+            self.status_label.configure(text="Ready")
+    
         self.scan_folder()
-        self.update_button_visibility()  
-        self.update_folder_path_display()   
+        self.update_button_visibility()
+        self.update_folder_path_display()
 
     def create_menu_bar(self):
         """Create menu bar with Help and About"""
         menubar = tk.Menu(self)
-        
-        # Help Menu
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="Usage Guide", command=self.show_help_usage)
         help_menu.add_command(label="Keyboard Shortcuts", command=self.show_help_shortcuts)
         menubar.add_cascade(label="📘 Help", menu=help_menu)
-
-        # About Menu
         menubar.add_command(label="ℹ️ About", command=self.show_about)
-
         self.configure(menu=menubar)
 
     def show_help_shortcuts(self):
-        """Show keyboard shortcuts"""
         msg = """
 📌 Keyboard Shortcuts:
-
 • Ctrl + O → Select Folder
 • Ctrl + S → Scan Files
 • Ctrl + R → Rename Selected File
 • Ctrl + Z → Undo Last Rename
 • Ctrl + Y → Redo Rename
 • Ctrl + A → Batch Rename All Files
-
 💡 Tip: Click any file to preview rename.
 💡 Tip: Use 'Show Done Files' to finalize with %8%.
-"""
+💡 Tip: Use 'Master Move Mode' to consolidate all Done files.
+        """
         messagebox.showinfo("📘 Help: Keyboard Shortcuts", msg)
 
     def show_help_usage(self):
-        """Show how to use the app"""
         msg = """
 📘 How to Use Auto File Renamer:
-
 1. Click '📁 Select 2025 Folder' to set root
 2. Files will appear in the list
 3. Click any file to see rename preview
@@ -902,68 +922,73 @@ class FileRenamerApp(ctk.CTk):
 6. Use '📁 Batch Rename' for multiple files
 7. Use '🔧 Edit Keywords' to add 'layout', 'design', etc.
 8. Use '👁️ Show Finalize Files' to manually add %8%
+9. Use '📦 Master Move Mode' to collect all Done files to Master Done.
 
 📁 Folder Structure:
 2025 → Month → Date → Party → File.plt
-
 📤 Output:
 {Code}_{Name} (C.S)(FT.1x2)(Q.2)%%.plt → Moved to 'Done'
-
-🔧 Keywords:
-- Use 'x' → '2 x' → (Q.2)
-- Add more via UI
-"""
+        """
         messagebox.showinfo("📘 Help: Usage Guide", msg)
 
     def show_about(self):
-        """Show about window"""
         popup = ctk.CTkToplevel(self)
         popup.title("ℹ️ About")
         popup.geometry("450x500")
         popup.resizable(False, False)
         popup.transient(self)
         popup.grab_set()
-
         x = self.winfo_x() + (self.winfo_width() // 2) - 225
         y = self.winfo_y() + (self.winfo_height() // 2) - 250
         popup.geometry(f"+{int(x)}+{int(y)}")
-
         ctk.CTkLabel(popup, text=APP_NAME, font=("Segoe UI", 18, "bold")).pack(pady=10)
         ctk.CTkLabel(popup, text=f"Version {VERSION}", font=("Segoe UI", 14)).pack(pady=5)
         ctk.CTkLabel(popup, text=f"By: {AUTHOR}", font=("Segoe UI", 14)).pack(pady=5)
-
         ctk.CTkLabel(popup, text="📱 Contact:", font=("Segoe UI", 12, "bold")).pack(pady=(20, 5))
         ctk.CTkLabel(popup, text="WhatsApp: +91 98255 31314", font=("Segoe UI", 12)).pack()
         ctk.CTkLabel(popup, text="Instagram: @official.jignesh.1", font=("Segoe UI", 12)).pack()
         ctk.CTkLabel(popup, text="Email: Jigsthummar1990@gmail.com", font=("Segoe UI", 12)).pack()
-
         ctk.CTkLabel(popup, text="📜 License", font=("Segoe UI", 12, "bold")).pack(pady=(20, 5))
         ctk.CTkLabel(popup, text=COPYRIGHT, font=("Segoe UI", 10), wraplength=400).pack(pady=5)
         ctk.CTkLabel(popup, text="Proprietary Software. Do not distribute.", font=("Segoe UI", 10), wraplength=400).pack(pady=5)
-
         ctk.CTkButton(
             popup, text="📧 Send Email", width=120,
             command=lambda: webbrowser.open("mailto:Jigsthummar1990@gmail.com")
         ).pack(pady=10)
-
         ctk.CTkButton(popup, text="Close", width=100, command=popup.destroy).pack(pady=10)
 
     def update_button_visibility(self):
-        """Show or hide buttons based on finalize mode"""
-        if self.show_done_var.get():
-            # Finalize Mode: Hide Rename, Undo, Redo, Undo All
+        """Show or hide buttons based on mode"""
+        if self.master_move_var.get():
+            # Master Move Mode: Show Move Button, Hide Others
+            self.master_move_btn.grid()
+            self.undo_master_move_btn.grid()
             self.rename_btn.grid_remove()
             self.undo_btn.grid_remove()
             self.redo_btn.grid_remove()
             self.undo_all_btn.grid_remove()
             self.select_all_btn.grid_remove()
+            self.test_btn.grid_remove()
+        elif self.show_done_var.get():
+            # Finalize Mode: Hide Rename, Undo, Redo, Undo All, Master Move
+            self.master_move_btn.grid_remove()
+            self.undo_master_move_btn.grid_remove()
+            self.rename_btn.grid_remove()
+            self.undo_btn.grid_remove()
+            self.redo_btn.grid_remove()
+            self.undo_all_btn.grid_remove()
+            self.select_all_btn.grid_remove()
+            self.test_btn.grid()  # Keep Test button for preview
         else:
-            # Normal Mode: Show all buttons
+            # Normal Mode: Show all buttons, Hide Master Move
+            self.master_move_btn.grid_remove()
+            self.undo_master_move_btn.grid_remove()
             self.rename_btn.grid()
             self.undo_btn.grid()
             self.redo_btn.grid()
             self.undo_all_btn.grid()
             self.select_all_btn.grid()
+            self.test_btn.grid()
 
     def calculate_math(self, event=None):
         """Evaluate simple math expression"""
@@ -971,48 +996,31 @@ class FileRenamerApp(ctk.CTk):
         if not expr:
             return
         try:
-            # Allow only safe characters
             allowed = "0123456789+-*/(). %"
             if all(c in allowed for c in expr):
                 result = eval(expr)
                 if isinstance(result, float):
                     result = round(result, 2)
                 self.status_label.configure(text=f"🧮 Math: {result} | Ready")
-                self.math_entry.delete(0, "end")  # Clear after use
+                self.math_entry.delete(0, "end")
             else:
                 self.status_label.configure(text="❌ Invalid characters in math")
         except:
             self.status_label.configure(text="❌ Math error")
 
     def scroll_bulletin(self):
-        """Scroll bulletin text from LEFT to RIGHT, starting from the left edge"""
+        """Scroll bulletin text from LEFT to RIGHT"""
         if not self.is_scrolling or not self.bulletin_messages:
             return
-
-        # Current message
         msg = self.bulletin_messages[self.current_msg_index]
-        display_text = msg  # No extra spaces
-
-        # Settings
-        visible_width = 60  # Adjust based on your window width
+        display_text = msg
+        visible_width = 60
         total_len = len(display_text)
-
-        # Create a looped string
-        looped = display_text + "   " + display_text  # Add gap
-
-        # Start position moves left → visual right scroll
+        looped = display_text + "   " + display_text
         start_pos = self.bulletin_offset % total_len
-
-        # Get visible slice
         visible = looped[start_pos:start_pos + visible_width]
-
-        # Update label
         self.bulletin_label.configure(text=visible)
-
-        # Move to next position
         self.bulletin_offset += 1
-
-        # Repeat
         self.after(150, self.scroll_bulletin)
 
     def run_startup_wizard(self):
@@ -1027,12 +1035,9 @@ class FileRenamerApp(ctk.CTk):
         wizard.grab_set()
         wizard.lift()
         wizard.focus_force()
-
-        # Center popup
         x = self.winfo_x() + (self.winfo_width() // 2) - 250
         y = self.winfo_y() + (self.winfo_height() // 2) - 150
         wizard.geometry(f"+{int(x)}+{int(y)}")
-
         ctk.CTkLabel(wizard, text="Welcome to Auto File Renamer!", font=("Segoe UI", 16, "bold")).pack(pady=20)
         ctk.CTkLabel(
             wizard,
@@ -1040,25 +1045,20 @@ class FileRenamerApp(ctk.CTk):
             wraplength=400,
             justify="center"
         ).pack(pady=10)
-        ctk.CTkButton(wizard, text="Let's Go!", command=wizard.destroy).pack(pady=20)
-
         steps = [
             "1. Click '📁 Select 2025 Folder' to set root",
             "2. Your files will appear in the list",
             "3. Click any file to preview rename",
             "4. Use '🔧 Edit Keywords' to add 'layout', 'design', etc.",
             "5. Click '✅ Rename' to process",
-            "6. Use '📁 Batch Rename' for multiple files"
+            "6. Use '📁 Batch Rename' for multiple files",
+            "7. Use '📦 Master Move' to collect Done files"
         ]
-
         for step in steps:
             ctk.CTkLabel(wizard, text=step, font=("Segoe UI", 11), anchor="w").pack(pady=2, padx=20, anchor="w")
-
         def finish():
             self.first_run = False
             wizard.destroy()
-            
-
         ctk.CTkButton(wizard, text="Let's Go!", command=finish, height=40, font=FONT).pack(pady=20)
 
     def check_for_update(self, force=False):
@@ -1081,27 +1081,22 @@ class FileRenamerApp(ctk.CTk):
         popup.geometry("400x150")
         popup.transient(self)
         popup.grab_set()
-
         ctk.CTkLabel(
             popup,
             text="A new version is available!",
             font=("Segoe UI", 16, "bold")
         ).pack(pady=10)
-
         ctk.CTkLabel(
             popup,
             text=f"Current: v{self.CURRENT_VERSION}\nLatest: v{latest_version}",
             font=("Consolas", 12)
         ).pack(pady=5)
-
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=10)
-
         def open_release_page():
             import webbrowser
             webbrowser.open("https://github.com/jigsthummar007/AutoRenamer/releases/latest")
             popup.destroy()
-
         ctk.CTkButton(btn_frame, text="Download Update", command=open_release_page).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Close", command=popup.destroy).pack(side="left", padx=5)
 
@@ -1110,20 +1105,17 @@ class FileRenamerApp(ctk.CTk):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_folder = backup_dir / timestamp
         backup_folder.mkdir(exist_ok=True)
-
         items = [
             (self.config_file, "config.json"),
             (codes_dir / "parties.csv", "parties.csv"),
             (keywords_file, "keywords.json")
         ]
-
         for src, name in items:
             try:
                 if src.exists():
                     shutil.copy2(src, backup_folder / name)
             except Exception as e:
                 logging.warning(f"Backup failed for {name}: {e}")
-
         self.status_label.configure(text=f"✅ Backup created: {timestamp}")
 
     def export_rename_log(self):
@@ -1131,7 +1123,6 @@ class FileRenamerApp(ctk.CTk):
         if not self.history.history:
             messagebox.showinfo("Export Log", "No rename history to export.")
             return
-
         file = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv")],
@@ -1139,7 +1130,6 @@ class FileRenamerApp(ctk.CTk):
         )
         if not file:
             return
-
         try:
             with open(file, mode='w', encoding='utf-8', newline='') as f:
                 writer = csv.writer(f)
@@ -1161,6 +1151,120 @@ class FileRenamerApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Export Failed", str(e))
 
+    def export_config(self):
+        """Export keywords.json and parties.csv to a backup file"""
+        file = filedialog.asksaveasfilename(
+            defaultextension=".zip",
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+            title="Save Configuration Backup"
+        )
+        if not file:
+            return
+    
+        try:
+            import zipfile
+            import tempfile
+        
+            # Create a temporary directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+            
+                # Copy keywords.json
+                if keywords_file.exists():
+                    shutil.copy2(keywords_file, temp_path / "keywords.json")
+            
+                # Copy parties.csv
+                parties_csv = codes_dir / "parties.csv"
+                if parties_csv.exists():
+                    shutil.copy2(parties_csv, temp_path / "parties.csv")
+            
+                # Copy config.json
+                if self.config_file.exists():
+                    shutil.copy2(self.config_file, temp_path / "config.json")
+            
+                # Create ZIP file
+                with zipfile.ZipFile(file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for f in temp_path.iterdir():
+                        zipf.write(f, f.name)
+        
+            messagebox.showinfo(
+                "Export Success", 
+                f"Configuration exported successfully!\n\n"
+                f"📁 File: {file}\n"
+                f"✅ Includes: Keywords, Parties, Config"
+            )
+            self.status_label.configure(text=f"✅ Config exported: {Path(file).name}")
+        
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not export configuration:\n{e}")
+            logging.error(f"Config export failed: {e}")
+
+    def import_config(self):
+        """Import keywords.json and parties.csv from a backup file"""
+        file = filedialog.askopenfilename(
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+            title="Select Configuration Backup"
+        )
+        if not file:
+            return
+    
+        confirm = messagebox.askyesno(
+            "Confirm Import",
+            "⚠️ Warning: This will overwrite your current Keywords and Parties!\n\n"
+            "Do you want to continue?"
+        )
+        if not confirm:
+            return
+    
+        try:
+            import zipfile
+            import tempfile
+        
+            # Create a temporary directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+            
+                # Extract ZIP file
+                with zipfile.ZipFile(file, 'r') as zipf:
+                    zipf.extractall(temp_path)
+            
+                # Import keywords.json
+                imported_keywords = temp_path / "keywords.json"
+                if imported_keywords.exists():
+                    shutil.copy2(imported_keywords, keywords_file)
+                    self.load_keywords()  # Reload keywords
+            
+                # Import parties.csv
+                imported_parties = temp_path / "parties.csv"
+                if imported_parties.exists():
+                    shutil.copy2(imported_parties, codes_dir / "parties.csv")
+                    self.load_parties_csv()  # Reload parties
+            
+                # Import config.json (optional)
+                imported_config = temp_path / "config.json"
+                if imported_config.exists():
+                    # Only import last_folder, not overwrite everything
+                    try:
+                        with open(imported_config, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            if "last_folder" in data:
+                                self.last_folder = data["last_folder"]
+                                self.save_config()
+                    except:
+                        pass
+        
+            messagebox.showinfo(
+                "Import Success", 
+                f"Configuration imported successfully!\n\n"
+                f"✅ Keywords: {len(self.quantity_keywords)} active\n"
+                f"✅ Parties: {len(self.party_map)} loaded\n\n"
+                f"🔄 Please restart the app for all changes to take effect."
+            )
+            self.status_label.configure(text=f"✅ Config imported: {Path(file).name}")
+        
+        except Exception as e:
+            messagebox.showerror("Import Failed", f"Could not import configuration:\n{e}")
+            logging.error(f"Config import failed: {e}")
 
     def load_keywords(self):
         """Load quantity keywords from config/keywords.json"""
@@ -1174,7 +1278,7 @@ class FileRenamerApp(ctk.CTk):
                 self.quantity_keywords = DEFAULT_KEYWORDS
         else:
             self.quantity_keywords = DEFAULT_KEYWORDS
-            self.save_keywords()
+        self.save_keywords()
 
     def save_keywords(self):
         """Save keywords to file"""
@@ -1192,34 +1296,26 @@ class FileRenamerApp(ctk.CTk):
         popup.resizable(False, False)
         popup.transient(self)
         popup.grab_set()
-
         x = self.winfo_x() + (self.winfo_width() // 2) - 250
         y = self.winfo_y() + (self.winfo_height() // 2) - 200
         popup.geometry(f"+{int(x)}+{int(y)}")
-
         ctk.CTkLabel(popup, text="Manage Quantity Keywords", font=TITLE_FONT).pack(pady=10)
-
         list_frame = ctk.CTkScrollableFrame(popup, height=200)
         list_frame.pack(pady=10, padx=20, fill="both", expand=True)
-
         keyword_vars = []
         delete_btns = []
-
         def refresh_list():
             for var, btn in zip(keyword_vars, delete_btns):
                 var.destroy()
                 btn.destroy()
             keyword_vars.clear()
             delete_btns.clear()
-
             for kw in self.quantity_keywords:
                 inner_frame = ctk.CTkFrame(list_frame, fg_color="transparent")
                 inner_frame.pack(fill="x", pady=2)
-
                 var = ctk.CTkLabel(inner_frame, text=kw, font=CODE_FONT, width=100, anchor="w")
                 var.pack(side="left", padx=(0, 10))
                 keyword_vars.append(var)
-
                 btn = ctk.CTkButton(
                     inner_frame,
                     text="🗑️",
@@ -1231,73 +1327,51 @@ class FileRenamerApp(ctk.CTk):
                 )
                 btn.pack(side="right")
                 delete_btns.append(btn)
-
         def remove_keyword(kw, win):
             self.quantity_keywords.remove(kw)
             refresh_list()
-
         def add_keyword():
             new_kw = add_entry.get().strip().lower()
             if new_kw and new_kw not in self.quantity_keywords:
                 self.quantity_keywords.append(new_kw)
                 add_entry.delete(0, "end")
                 refresh_list()
-
         def save_and_close():
             self.save_keywords()
             popup.destroy()
             self.status_label.configure(text=f"✅ Keywords updated: {len(self.quantity_keywords)} active")
-
         def reset_default():
             self.quantity_keywords = DEFAULT_KEYWORDS.copy()
             refresh_list()
-
         refresh_list()
-
         add_frame = ctk.CTkFrame(popup)
         add_frame.pack(pady=10, padx=20, fill="x")
         ctk.CTkLabel(add_frame, text="Add New:").pack(side="left")
         add_entry = ctk.CTkEntry(add_frame, placeholder_text="e.g., layout, design")
         add_entry.pack(side="left", fill="x", expand=True, padx=5)
         ctk.CTkButton(add_frame, text="Add", command=add_keyword).pack(side="left")
-
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=10)
         ctk.CTkButton(btn_frame, text="💾 Save & Close", command=save_and_close).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="🔄 Reset", command=reset_default).pack(side="left", padx=5)
-
         popup.bind("<Return>", lambda e: add_keyword())
         popup.focus()
 
     def extract_dimensions(self, filename: str) -> str:
         """Extract dimensions and return FT string with custom height logic"""
-        # Normalize: lowercase and clean extra spaces
         clean = re.sub(r'\s+', ' ', filename.strip().lower())
-    
-        # Convert all variations of 'x' and 'by' to a standard 'x' separator
-        # This handles: 24x36, 24X36, 24 x 36, 24X 36, 24 x36, etc.
         clean = re.sub(r'\s*x\s*', 'x', clean)
-    
-        # This handles: 24by36, 24BY36, 24 by 36, 24BY 36, 24 by36, 24bY36, 24 bY 36, etc.
         clean = re.sub(r'\s*by\s*', 'x', clean, flags=re.IGNORECASE)
-    
-        # Now search for pattern: digits + 'x' + digits
         match = re.search(r'(\d+\.?\d*)x(\d+\.?\d*)', clean)
         if not match:
             return ""
-        
         w_in = float(match.group(1))
         h_in = float(match.group(2))
-    
-        # Identify width (smaller) and height (larger)
         if w_in <= h_in:
             width_in, height_in = w_in, h_in
         else:
             width_in, height_in = h_in, w_in
-
-        # --- Width Logic (based on machine) ---
         machine = self.machine_var.get()
-
         def get_width_ft(inch):
             if machine == "(C.E)":
                 if inch <= 26.5: return 2
@@ -1306,7 +1380,7 @@ class FileRenamerApp(ctk.CTk):
                 elif inch <= 49.5: return 4
                 elif inch <= 60.0: return 5
                 else: return 5
-            else:  # (C.S)
+            else:
                 if inch <= 26.0: return 2
                 elif inch <= 32.0: return 2.5
                 elif inch <= 38.0: return 3
@@ -1316,8 +1390,6 @@ class FileRenamerApp(ctk.CTk):
                 elif inch <= 98.0: return 8
                 elif inch <= 124.0: return 10
                 else: return 10
-
-        # --- Height Logic (Same for both machines) ---
         def get_height_ft(inch):
             if inch <= 13: return 1
             elif inch <= 18: return 1.5
@@ -1518,30 +1590,20 @@ class FileRenamerApp(ctk.CTk):
             elif inch <= 1188: return 99
             elif inch <= 1194: return 99.5
             elif inch <= 1200: return 100
-
             else:
-                # You'll add more ranges later
-                # For now, cap at 100 or extend logic
-                return 100  # Placeholder — you'll update this later
-
+                return 100
         w_ft = get_width_ft(width_in)
         h_ft = get_height_ft(height_in)
-
-        # Enforce minimum area (1x2) — though unlikely here
         if w_ft * h_ft < 2:
             w_ft, h_ft = 1, 2
-
-        # Format: show integers without .0, keep decimals otherwise
         def fmt(val):
             return int(val) if val == int(val) else val
-
         return f"{fmt(w_ft)}x{fmt(h_ft)}"
 
     def detect_quantity(self, filename: str) -> int:
         clean = re.sub(r'\s+', ' ', filename.strip().lower())
         clean = re.sub(r'\d+\s*x\s*\d+', '', clean)
         clean = re.sub(r'\s+', ' ', clean).strip()
-
         for kw in self.quantity_keywords:
             match = re.search(rf'\b(\d+)\s*{re.escape(kw)}\b', clean)
             if match:
@@ -1563,7 +1625,6 @@ class FileRenamerApp(ctk.CTk):
             return
         stem = self.selected_file.stem
         ext = self.selected_file.suffix
-        # Find party folder
         party_folder = self.find_party_folder(self.selected_file)
         if not party_folder:
             color = "red"
@@ -1593,62 +1654,75 @@ class FileRenamerApp(ctk.CTk):
             messagebox.showerror("Error", f"Could not open folder:\n{e}")
 
     def scan_folder(self):
-        # Show loading message
         self.status_label.configure(text="🔍 Scanning folder... Please wait")
-        # Disable buttons
         self.scan_btn.configure(state="disabled")
         self.reload_csv_btn.configure(state="disabled")
         self.select_all_btn.configure(state="disabled")
         self.rename_btn.configure(state="disabled")
-        # Update UI immediately
         self.update_idletasks()
+
         if not self.selected_root or not self.selected_root.exists():
-            self.file_listbox.delete("1.0", "end")  # Use correct index for tk.Text
+            self.file_listbox.delete("1.0", "end")
             header_text = f"{'Code':<6} {'Party':<15} Filename\n{'-'*60}\n"
             self.file_listbox.insert("end", header_text)
             return
+
         try:
             files = []
+            master_done_path = self.selected_root / "Master_Done"
+
             for ext in self.allowed_extensions:
                 for file_path in self.selected_root.rglob(f"*{ext}"):
-                    # Find the closest party folder
                     party_folder = self.find_party_folder(file_path)
                     if not party_folder:
-                        continue  # Not under any party folder
+                        continue
 
                     # Check if in Done folder
                     in_done = "done" in [p.lower() for p in file_path.parts]
-
-                    # Finalize Mode: Only show files in Done and NOT finalized
-                    if self.show_done_var.get():
+                
+                    # ✅ Master Move Mode Logic (Only Finalized Files with [ok])
+                    if self.master_move_var.get():
+                        # Include files in ANY Done folder, EXCLUDING Master_Done itself
                         if not in_done:
-                            continue  # Not in Done → skip
+                            continue
+                        if "master_done" in [p.lower() for p in file_path.parts]:
+                            continue
+                        if "[ok]" not in file_path.name:  # ✅ Only finalized files
+                            continue
+                    
+                    # Finalize Mode Logic
+                    elif self.show_done_var.get():
+                        if not in_done:
+                            continue
                         if "[ok]" in file_path.name:
-                            continue  # Already finalized → skip
+                            continue
+                    
+                    # Normal Mode Logic
                     else:
-                        # Normal Mode: Skip files in Done
                         if in_done:
                             continue
-                        # Skip already finalized files
                         if "[ok]" in file_path.name:
                             continue
 
                     files.append(file_path)
 
-            # Sort and update UI
             files = sorted(files, key=lambda x: x.name.lower())
             self.file_listbox.delete("0.0", "end")
-
-            mode = "Finalize Mode" if self.show_done_var.get() else "New Files"
-            self.file_listbox.insert("0.0", f"📁 {mode}\nFiles:\n")
-
+        
+            if self.master_move_var.get():
+                mode = "📦 Master Move (Finalized Files)"
+            elif self.show_done_var.get():
+                mode = "👁️ Finalize Mode"
+            else:
+                mode = "📁 New Files"
+            
+            self.file_listbox.insert("0.0", f"{mode}\nFiles:\n")
             self.file_path_list = []
+        
             for file_path in files:
                 party_folder = self.find_party_folder(file_path)
                 if not party_folder:
                     continue
-
-                # Find the original party name as it appears in parties.csv
                 original_party_name = next(
                     (name for name in self.party_map if name.lower() == party_folder.name.lower()),
                     party_folder.name
@@ -1657,32 +1731,29 @@ class FileRenamerApp(ctk.CTk):
                 display = f"{code} | {original_party_name} | {file_path.name}\n"
                 self.file_listbox.insert("end", display, "normal")
                 self.file_path_list.append(file_path)
-
+        
             self.filtered_file_list = self.file_path_list[:]
-
-            # Update UI
-            if self.show_done_var.get():
+        
+            # Update button visibility based on mode
+            if self.show_done_var.get() or self.master_move_var.get():
                 self.select_all_btn.grid_remove()
             else:
                 self.select_all_btn.grid()
-
+            
             self.status_label.configure(text=f"✅ {mode}: {len(self.file_path_list)} files")
             self.update_info_bar()
             self.update_folder_path_display()
-            # Re-enable buttons
+        
             self.scan_btn.configure(state="normal")
             self.reload_csv_btn.configure(state="normal")
             self.select_all_btn.configure(state="normal")
             self.rename_btn.configure(state="normal")
-
         except Exception as e:
             self.status_label.configure(text=f"❌ Scan error: {e}")
 
     def on_search_change(self, *args):
         query = self.search_var.get().strip().lower()
         self.file_listbox.delete("1.0", "end")
-
-        # Clear and rebuild filtered list
         if query == "":
             self.filtered_file_list = self.file_path_list.copy()
         else:
@@ -1690,15 +1761,11 @@ class FileRenamerApp(ctk.CTk):
             for file_path in self.file_path_list:
                 if query in file_path.name.lower():
                     self.filtered_file_list.append(file_path)
-
-        # Sort for consistency
-        self.filtered_file_list.sort(key=lambda x: x.name.lower())
-
-        # Build header with proper formatting and newline
+            self.filtered_file_list.sort(key=lambda x: x.name.lower())
+        
         header_text = f"{'Code':<6} {'Party':<15} Filename\n{'-'*60}\n"
         self.file_listbox.insert("end", header_text)
-
-        # Insert files
+        
         for file_path in self.filtered_file_list:
             party_folder = self.find_party_folder(file_path)
             if not party_folder:
@@ -1710,8 +1777,7 @@ class FileRenamerApp(ctk.CTk):
             code = self.party_map.get(original_party_name, "?")
             display = f"{code:<6} {original_party_name:<15} {file_path.name}\n"
             self.file_listbox.insert("end", display)
-
-        # Update status
+        
         self.status_label.configure(text=f"🔍 Found {len(self.filtered_file_list)} matching files")
 
     def on_file_click(self, event):
@@ -1720,60 +1786,59 @@ class FileRenamerApp(ctk.CTk):
             line_num = int(index.split('.')[0])
             HEADER_LINES = 3
             file_index = line_num - HEADER_LINES
-            if file_index < 0 or file_index >= len(self.filtered_file_list): return
+            if file_index < 0 or file_index >= len(self.filtered_file_list): 
+                return
             selected_path = self.filtered_file_list[file_index]
-            if not selected_path.exists(): return
+            if not selected_path.exists(): 
+                return
             self.selected_file = selected_path.resolve()
-
-            # Only highlight in Normal Mode
-            if not self.show_done_var.get():
-                # Remove previous highlights
-                self.file_listbox.tag_remove("selected", "1.0", "end")
-                # Apply highlight to current line
-                start_line = f"{line_num}.0"
-                end_line = f"{line_num}.end"
-                self.file_listbox.tag_add("selected", start_line, end_line)
-                self.file_listbox.see(start_line)
-            else:
-                # Finalize Mode: Open popup
+        
+            # ✅ Finalize Mode: Open popup immediately
+            if self.show_done_var.get():
                 self.open_manual_finalize_popup()
                 return
+        
+            # ✅ Master Move Mode: Just select, no finalize popup
+            if self.master_move_var.get():
+                # Remove previous highlights
+                self.file_listbox.tag_remove("selected", "1.0", "end")
+                self.file_label.configure(text=f"Selected: {selected_path.name}")
+                self.status_label.configure(text=f"📦 Ready to move: {selected_path.name}")
+                return
+        
+            # Normal Mode: Highlight and preview
+            self.file_listbox.tag_remove("selected", "1.0", "end")
+            start_line = f"{line_num}.0"
+            end_line = f"{line_num}.end"
+            self.file_listbox.tag_add("selected", start_line, end_line)
+            self.file_listbox.see(start_line)
 
-            # Update UI
             self.file_label.configure(text=f"Selected: {selected_path.name}")
             self.update_preview()
             self.status_label.configure(text=f"📁 {selected_path.parent.name} | Ready")
-
-            # Flash effect
             self.file_label.configure(text_color="lightblue")
             self.after(100, lambda: self.file_label.configure(text_color="white"))
-
         except Exception as e:
             self.status_label.configure(text=f"❌ Click error: {e}")
 
     def open_manual_finalize_popup(self):
+        # Existing Finalize Logic (unchanged)
         if not self.selected_file or "[ok]" in self.selected_file.name:
             return
-
         files_left = [p for p in self.filtered_file_list if "[ok]" not in str(p)]
         try:
             current_idx = files_left.index(self.selected_file)
         except (ValueError, AttributeError):
             current_idx = 0
-
         popup = ctk.CTkToplevel(self)
         popup.title("✅ Finalize File")
         popup.geometry("700x350")
         popup.resizable(False, False)
         popup.transient(self)
         popup.grab_set()
-
-        # Center popup
         x = self.winfo_x() + (self.winfo_width() // 2) - 200
         y = self.winfo_y() + (self.winfo_height() // 2) - 115
         popup.geometry(f"+{int(x)}+{int(y)}")
-
-        # Top-right "Open Folder" button
         folder_btn = ctk.CTkButton(
             popup,
             text="📁 Open Folder",
@@ -1783,8 +1848,6 @@ class FileRenamerApp(ctk.CTk):
             font=("Segoe UI", 12)
         )
         folder_btn.place(relx=1.0, rely=0.0, x=-10, y=10, anchor="ne")
-
-        # Show file name
         ctk.CTkLabel(popup, text="📄 File:", font=("Segoe UI", 11, "bold")).pack(pady=(10, 2), anchor="w", padx=20)
         ctk.CTkLabel(
             popup,
@@ -1792,8 +1855,6 @@ class FileRenamerApp(ctk.CTk):
             font=("Consolas", 16),
             text_color="lightblue"
         ).pack(pady=(0, 10), padx=20, anchor="w")
-
-        # Show party name and code
         party_folder = self.find_party_folder(self.selected_file)
         if party_folder:
             party_name = party_folder.name
@@ -1811,54 +1872,35 @@ class FileRenamerApp(ctk.CTk):
                 font=("Segoe UI", 15, "bold"),
                 text_color="Red"
             ).pack(pady=(0, 10), padx=20, anchor="w")
-
-        # Extract current values
         stem = self.selected_file.stem
         ext = self.selected_file.suffix
-
-        # Detect FT
         ft_match = re.search(r'\(FT\.(\d+\.?\d*x\d+\.?\d*)\)', stem)
         ft_value = ft_match.group(1) if ft_match else "1x1"
-
-        # Detect Q
         qty_match = re.search(r'\(Q\.(\d+)\)', stem)
         qty_value = qty_match.group(1) if qty_match else "1"
-
-        # Detect Cat
         cat_match = re.search(r'%(\d+)%', stem)
         cat_value = cat_match.group(1) if cat_match else "1"
-
-        # Form layout
         frame = ctk.CTkFrame(popup, fg_color="transparent")
         frame.pack(pady=6)
-
-        # FT Entry
         ctk.CTkLabel(frame, text="FT:").pack(side="left", padx=5)
         ft_var = ctk.StringVar(value=ft_value)
         ft_entry = ctk.CTkEntry(frame, textvariable=ft_var, width=100)
         ft_entry.pack(side="left", padx=10)
-
-        # Cat Entry
         ctk.CTkLabel(frame, text="Cat:").pack(side="left", padx=5)
         cat_var = ctk.StringVar(value="1")
         cat_entry = ctk.CTkEntry(frame, textvariable=cat_var, width=60)
         cat_entry.pack(side="left", padx=10)
-
-        # Q Entry
         ctk.CTkLabel(frame, text="Qty:").pack(side="left", padx=5)
         qty_var = ctk.StringVar(value=qty_value)
         qty_entry = ctk.CTkEntry(frame, textvariable=qty_var, width=60)
         qty_entry.pack(side="left", padx=10)
-
         def finalize():
             ft = ft_var.get().strip()
             qty = qty_var.get().strip()
             cat = cat_var.get().strip()
-
             if not ft or not qty.isdigit() or int(qty) < 1 or not cat:
                 messagebox.showwarning("Invalid", "All fields are required and Qty ≥ 1")
                 return
-
             try:
                 old_path = self.selected_file
                 if "[ok]" in old_path.name:
@@ -1866,7 +1908,6 @@ class FileRenamerApp(ctk.CTk):
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to access file: {e}")
                 return
-
             base = old_path.stem
             base = re.sub(r'\(FT\.\d+\.?\d*x\d+\.?\d*\)', '', base)
             base = re.sub(r'\(Q\.\d+\)', '', base)
@@ -1874,79 +1915,51 @@ class FileRenamerApp(ctk.CTk):
             base = re.sub(r'%%+', '', base)
             base = re.sub(r'\[ok\]', '', base)
             base = re.sub(r'\s+', ' ', base).strip()
-
             machine = self.machine_var.get()
             if machine in base and "[ok]" not in base:
                 base = base.replace(machine, f"{machine}")
-                
-
-                new_name = f"{base}(FT.{ft})(Q.{qty})%{cat}%[ok]{ext}"
-                new_path = old_path.parent / new_name
-
-                # Handle duplicate filenames
-                counter = 1
-                original_new_path = new_path
-                while new_path.exists():
-                    name_without_ext = f"{original_new_path.stem} ({counter})"
-                    new_path = original_new_path.parent / f"{name_without_ext}{ext}"
-                    counter += 1
-                    if counter > 100:
-                        messagebox.showerror("Error", "Too many duplicates. Clean up folder.")
-                        return
-
-                # Rename
-                old_path.rename(new_path)
-                self.history.add(old_path, new_path)
-                self.status_label.configure(text=f"✅ Finalized: {new_path.name}")
-
-                # Update last finalized preview
-                if hasattr(popup, 'last_finalized_label'):
-                    popup.last_finalized_label.configure(text=f"Last: {new_path.name}")
-                    popup.last_finalized_path_label.configure(text=f"Path: {new_path.parent}")
-
-                # Auto-advance to next file
-                popup.destroy()
-                self.scan_folder()
-
-                # Recalculate list after rename
-                files_left_after = [p for p in self.filtered_file_list if "[ok]" not in str(p)]
-
-                # Find the current file's new index in the updated list
-                try:
-                    current_idx = files_left_after.index(self.selected_file)
-                except ValueError:
-                    # Current file not found (already finalized or moved)
-                    if files_left_after:
-                        self.selected_file = files_left_after[0]
-                        self.after(100, self.open_manual_finalize_popup)
-                    else:
-                        self.status_label.configure(text="✅ All files finalized")
+            new_name = f"{base}(FT.{ft})(Q.{qty})%{cat}%[ok]{ext}"
+            new_path = old_path.parent / new_name
+            counter = 1
+            original_new_path = new_path
+            while new_path.exists():
+                name_without_ext = f"{original_new_path.stem} ({counter})"
+                new_path = original_new_path.parent / f"{name_without_ext}{ext}"
+                counter += 1
+                if counter > 100:
+                    messagebox.showerror("Error", "Too many duplicates. Clean up folder.")
                     return
-
-                # Move to next file
-                next_idx = current_idx + 1
-                if next_idx < len(files_left_after):
-                    self.selected_file = files_left_after[next_idx]
+            old_path.rename(new_path)
+            self.history.add(old_path, new_path)
+            self.status_label.configure(text=f"✅ Finalized: {new_path.name}")
+            if hasattr(popup, 'last_finalized_label'):
+                popup.last_finalized_label.configure(text=f"Last: {new_path.name}")
+                popup.last_finalized_path_label.configure(text=f"Path: {new_path.parent}")
+            popup.destroy()
+            self.scan_folder()
+            files_left_after = [p for p in self.filtered_file_list if "[ok]" not in str(p)]
+            try:
+                current_idx = files_left_after.index(self.selected_file)
+            except ValueError:
+                if files_left_after:
+                    self.selected_file = files_left_after[0]
                     self.after(100, self.open_manual_finalize_popup)
                 else:
                     self.status_label.configure(text="✅ All files finalized")
-
-        # Buttons
+                return
+            next_idx = current_idx + 1
+            if next_idx < len(files_left_after):
+                self.selected_file = files_left_after[next_idx]
+                self.after(100, self.open_manual_finalize_popup)
+            else:
+                self.status_label.configure(text="✅ All files finalized")
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=12)
-
-        # OK Button (focusable)
         ok_btn = ctk.CTkButton(btn_frame, text="✅ OK", command=finalize, width=80)
         ok_btn.pack(side="left", padx=5)
-
-        # Cancel Button
         ctk.CTkButton(btn_frame, text="Cancel", command=popup.destroy, width=80).pack(side="left", padx=5)
-
-        # Status bar for last finalized preview (bottom)
         status_frame = ctk.CTkFrame(popup, fg_color="transparent")
         status_frame.pack(side="bottom", fill="x", padx=20, pady=10)
-
-        # Label for filename
         popup.last_finalized_label = ctk.CTkLabel(
             status_frame,
             text="Last: —",
@@ -1955,8 +1968,6 @@ class FileRenamerApp(ctk.CTk):
             anchor="w"
         )
         popup.last_finalized_label.pack(fill="x")
-
-        # Label for path
         popup.last_finalized_path_label = ctk.CTkLabel(
             status_frame,
             text="",
@@ -1965,29 +1976,20 @@ class FileRenamerApp(ctk.CTk):
             anchor="w"
         )
         popup.last_finalized_path_label.pack(fill="x", pady=(2, 0))
-
-        # Tab Navigation with Text Selection
         def select_on_focus(widget, var):
             def on_focus_in(e):
                 widget.select_range(0, "end")
                 widget.icursor("end")
             widget.bind("<FocusIn>", on_focus_in)
-
         select_on_focus(ft_entry, ft_var)
         select_on_focus(cat_entry, cat_var)
         select_on_focus(qty_entry, qty_var)
-
-        # Tab Order
         ft_entry.bind("<Tab>", lambda e: (cat_entry.focus(), "break"))
         cat_entry.bind("<Tab>", lambda e: (qty_entry.focus(), "break"))
         qty_entry.bind("<Tab>", lambda e: (ok_btn.focus(), "break"))
-
-        # Enter Key Support
         qty_entry.bind("<Return>", lambda e: finalize())
         ok_btn.bind("<Return>", lambda e: finalize())
         ok_btn.bind("<KP_Enter>", lambda e: finalize())
-
-        # Focus first field
         ft_entry.focus()
 
     def get_party_code(self, folder_name: str) -> str:
@@ -2000,38 +2002,32 @@ class FileRenamerApp(ctk.CTk):
         return "?"
 
     def show_manual_input_popup(self, callback, filename=None):
+        # Existing Helper (unchanged)
         popup = ctk.CTkToplevel(self)
         popup.title("✏️ Finalize File")
         popup.geometry("700x350")
         popup.resizable(False, False)
         popup.transient(self)
         popup.grab_set()
-
         x = self.winfo_x() + (self.winfo_width() // 2) - 190
         y = self.winfo_y() + (self.winfo_height() // 2) - 105
         popup.geometry(f"+{int(x)}+{int(y)}")
-
         if filename:
             ctk.CTkLabel(popup, text="📄 File:", font=("Helvetica", 11, "bold")).pack(pady=(10, 2), anchor="w", padx=20)
             ctk.CTkLabel(popup, text=filename, font=("Consolas", 16), text_color="lightblue").pack(pady=(0, 8), padx=20)
-
         frame = ctk.CTkFrame(popup, fg_color="transparent")
         frame.pack(pady=4)
-
         ctk.CTkLabel(frame, text="Qty:").pack(side="left", padx=5)
         qty_var = ctk.StringVar(value="1")
         qty_entry = ctk.CTkEntry(frame, textvariable=qty_var, width=60)
         qty_entry.pack(side="left", padx=10)
         qty_entry.focus()
-
         ctk.CTkLabel(frame, text="Cat:").pack(side="left", padx=5)
         cat_var = ctk.StringVar()
         cat_entry = ctk.CTkEntry(frame, textvariable=cat_var, width=60)
         cat_entry.pack(side="left", padx=10)
-
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=12)
-
         def submit():
             qty = qty_var.get().strip()
             if not qty.isdigit() or int(qty) < 1:
@@ -2039,26 +2035,18 @@ class FileRenamerApp(ctk.CTk):
                 return
             callback(qty, cat_var.get().strip())
             popup.destroy()
-            self.scan_folder()  # Refresh list
-
-            # Recalculate list after rename
+            self.scan_folder()
             files_left_after = [p for p in self.filtered_file_list if "[ok]" not in str(p)]
-
-            # Use stored index to find next file
             next_idx = popup.current_idx + 1
             if next_idx < len(files_left_after):
                 self.selected_file = files_left_after[next_idx]
                 self.after(100, self.open_manual_finalize_popup)
             else:
                 self.status_label.configure(text="✅ All files finalized")
-            
-
         def cancel():
             popup.destroy()
-
         ctk.CTkButton(btn_frame, text="✅ OK", command=submit, width=80).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Cancel", command=cancel, width=80).pack(side="left", padx=5)
-
         popup.bind("<Return>", lambda e: submit())
         popup.bind("<Escape>", lambda e: cancel())
         qty_entry.bind("<Tab>", lambda e: cat_entry.focus())
@@ -2070,7 +2058,6 @@ class FileRenamerApp(ctk.CTk):
         if not machine: return
         file_path = self.selected_file
         if not file_path.exists(): return
-        # Find the party folder
         party_folder = self.find_party_folder(file_path)
         if not party_folder:
             self.status_label.configure(text="❌ Not in a party folder")
@@ -2106,17 +2093,14 @@ class FileRenamerApp(ctk.CTk):
             self.status_label.configure(text=f"❌ Error: {e}")
 
     def select_all_files(self):
-        # Show processing
+        # Existing Batch Rename (unchanged)
         self.status_label.configure(text="📦 Batch renaming... Please wait")
-        # Disable buttons
         self.select_all_btn.configure(state="disabled")
         self.scan_btn.configure(state="disabled")
         self.rename_btn.configure(state="disabled")
         self.undo_btn.configure(state="disabled")
         self.redo_btn.configure(state="disabled")
         self.update_idletasks()
-
-        # Check if we should proceed
         if not self.file_path_list or self.show_done_var.get():
             self.status_label.configure(text="❌ No files to rename in normal mode")
             self.select_all_btn.configure(state="normal")
@@ -2125,7 +2109,6 @@ class FileRenamerApp(ctk.CTk):
             self.undo_btn.configure(state="normal")
             self.redo_btn.configure(state="normal")
             return
-
         machine = self.machine_var.get()
         if not machine:
             self.status_label.configure(text="❌ Machine not selected")
@@ -2135,7 +2118,6 @@ class FileRenamerApp(ctk.CTk):
             self.undo_btn.configure(state="normal")
             self.redo_btn.configure(state="normal")
             return
-
         confirm = messagebox.askyesno("Confirm Batch Rename", f"Rename all {len(self.file_path_list)} files?\nThis cannot be undone.")
         if not confirm:
             self.select_all_btn.configure(state="normal")
@@ -2144,35 +2126,22 @@ class FileRenamerApp(ctk.CTk):
             self.undo_btn.configure(state="normal")
             self.redo_btn.configure(state="normal")
             return
-
-        # ====== Progress Popup ======
         progress_popup = ctk.CTkToplevel(self)
         progress_popup.title("Batch Rename Progress")
         progress_popup.geometry("500x180")
         progress_popup.resizable(False, False)
         progress_popup.transient(self)
         progress_popup.grab_set()
-        progress_popup.protocol("WM_DELETE_WINDOW", lambda: None)  # Prevent closing
-
-        # Center popup
+        progress_popup.protocol("WM_DELETE_WINDOW", lambda: None)
         x = self.winfo_x() + (self.winfo_width() // 2) - 250
         y = self.winfo_y() + (self.winfo_height() // 2) - 90
         progress_popup.geometry(f"+{int(x)}+{int(y)}")
-
         ctk.CTkLabel(progress_popup, text="Batch Renaming Files...", font=TITLE_FONT).pack(pady=(10, 5))
-            # ====== Random Fun Messages ======
-        funny_messages = [
-           "🚀 ફાઇલ છૂટી! જેલમાંથી બહાર!"
-        ]
-
-        # ====== Status Label and Progress Bar ======
+        funny_messages = ["🚀 ફાઇલ છૂટી! જેલમાંથી બહાર!"]
         status_label = ctk.CTkLabel(progress_popup, text="Starting...", font=FONT, wraplength=450)
         status_label.pack(pady=5)
-
         progress_bar = ctk.CTkProgressBar(progress_popup, width=400)
         progress_bar.pack(pady=10)
-
-        # ====== Random Message Label (Red Area) ======
         random_msg_label = ctk.CTkLabel(
             progress_popup,
             text="",
@@ -2185,44 +2154,30 @@ class FileRenamerApp(ctk.CTk):
             anchor="w"
         )
         random_msg_label.pack(pady=10)
-
-        # ====== Update Random Message After Each File ======
         def update_random_message():
             if not self.file_path_list:
                 return
-            msg = self.random.choice(funny_messages)
+            msg = random.choice(funny_messages)
             random_msg_label.configure(text=msg)
-
-        # Import random inside function
         import random
-        self.random = random  # Store for use in inner function
-
-        # ====== Variables for Iterative Processing ======
+        self.random = random
         file_list = self.file_path_list[:]
         total = len(file_list)
         renamed_count = 0
         error_count = 0
-
-        # ====== Define Step-by-Step Function ======
         def process_next_file():
             nonlocal renamed_count, error_count
-
             if not file_list:
-                # === FINISH ===
                 progress_popup.destroy()
                 self.scan_folder()
                 self.status_label.configure(text=f"✅ Batch: {renamed_count} renamed, {error_count} failed")
-                # 🎵 Play sound only if file exists
                 if SOUND_FILE.exists():
                     try:
                         winsound.PlaySound(str(SOUND_FILE), winsound.SND_FILENAME | winsound.SND_ASYNC)
                     except Exception as e:
                         print("Sound error:", e)
-
-                # 🎉 Trigger Easter Egg: Jump to fun messages
-                self.current_msg_index = len(self.bulletin_messages) - 5  # Start from first easter egg
-                self.bulletin_offset = 60 + 50  # visible_width + message length (start off-screen right)
-                # Re-enable buttons
+                self.current_msg_index = len(self.bulletin_messages) - 5
+                self.bulletin_offset = 60 + 50
                 self.select_all_btn.configure(state="normal")
                 self.scan_btn.configure(state="normal")
                 self.rename_btn.configure(state="normal")
@@ -2230,9 +2185,7 @@ class FileRenamerApp(ctk.CTk):
                 self.redo_btn.configure(state="normal")
                 self.update_info_bar()
                 return
-
             file_path = file_list.pop(0)
-
             try:
                 if not file_path.exists():
                     status_label.configure(text=f"⚠️ Not found: {file_path.name}")
@@ -2253,14 +2206,10 @@ class FileRenamerApp(ctk.CTk):
                             dim = self.extract_dimensions(file_path.name)
                             new_name = self.generate_new_filename(stem, code, ext, dim)
                             new_path = file_path.parent / new_name
-
-                            # Handle conflict
                             counter = 1
                             while new_path.exists():
                                 new_path = file_path.parent / f"{new_name[:-len(ext)]} ({counter}){ext}"
                                 counter += 1
-
-                            # Rename + Move to Done
                             file_path.rename(new_path)
                             done_folder = file_path.parent / "Done"
                             done_folder.mkdir(exist_ok=True)
@@ -2269,69 +2218,47 @@ class FileRenamerApp(ctk.CTk):
                             self.history.add(file_path, final_path)
                             renamed_count += 1
                             status_label.configure(text=f"✅ Renamed: {file_path.name}")
-                            # Update random message in red area
-                            update_random_message()  # ← Add this line here
-
+                            update_random_message()
             except Exception as e:
                 error_count += 1
                 status_label.configure(text=f"❌ Error: {file_path.name}")
                 logging.error(f"Batch rename failed for {file_path}: {e}")
-
-            # Update progress
             progress = renamed_count + error_count
             progress_bar.set(progress / total)
             progress_popup.update_idletasks()
-
-            # Schedule next file
             self.after(50, process_next_file)
-
-        # ====== Start Processing ======
         self.after(100, process_next_file)
 
     def undo_all_batch(self):
+        # Existing Undo All (unchanged)
         if not self.history.history:
             messagebox.showinfo("Undo All", "Nothing to undo.")
             return
-
         confirm = messagebox.askyesno("Undo All", f"Undo {len(self.history.history)} renamed files?\nThis cannot be undone.")
         if not confirm:
             return
-
-        # ====== Progress Popup ======
         progress_popup = ctk.CTkToplevel(self)
         progress_popup.title("Undo All Progress")
         progress_popup.geometry("500x180")
         progress_popup.resizable(False, False)
         progress_popup.transient(self)
         progress_popup.grab_set()
-        progress_popup.protocol("WM_DELETE_WINDOW", lambda: None)  # Prevent closing
-
-        # Center popup
+        progress_popup.protocol("WM_DELETE_WINDOW", lambda: None)
         x = self.winfo_x() + (self.winfo_width() // 2) - 250
         y = self.winfo_y() + (self.winfo_height() // 2) - 90
         progress_popup.geometry(f"+{int(x)}+{int(y)}")
-
         ctk.CTkLabel(progress_popup, text="Undoing All Renames...", font=TITLE_FONT).pack(pady=(10, 5))
         status_label = ctk.CTkLabel(progress_popup, text="Starting...", font=FONT, wraplength=450)
         status_label.pack(pady=5)
-
         progress_bar = ctk.CTkProgressBar(progress_popup, width=400)
         progress_bar.set(0)
         progress_bar.pack(pady=10)
-
-        # ====== COPY OF BATCH RENAME'S RED AREA ======
-        # ====== Random Fun Messages (Same as Batch Rename) ======
-        funny_messages = [
-            "🚀 તો ડોફા પેલા જોય ને કરતો હોય તો...!"
-        ]
-
+        funny_messages = ["🚀 તો ડોફા પેલા જોય ને કરતો હોય તો...!"]
         import random
         self.random = random
-
         def update_random_message():
             msg = self.random.choice(funny_messages)
             random_msg_label.configure(text=msg)
-
         random_msg_label = ctk.CTkLabel(
             progress_popup,
             text="",
@@ -2344,68 +2271,49 @@ class FileRenamerApp(ctk.CTk):
             anchor="w"
         )
         random_msg_label.pack(pady=10)
-
-        # ====== Prepare ======
         items = self.history.history[:]
         total = len(items)
         restored = 0
-
-        # ====== Step-by-Step Undo ======
         def undo_next():
             nonlocal restored
-
             if not items:
-                # === FINISH ===
                 progress_popup.destroy()
                 self.scan_folder()
                 self.status_label.configure(text=f"↩ Undo All: {restored} files restored")
                 self.update_info_bar()
                 return
-
             item = items.pop(0)
             try:
                 src = Path(item["new"])
                 dst = Path(item["old"])
                 dst.parent.mkdir(exist_ok=True)
-
-                # Move file back
                 shutil.move(str(src), str(dst))
-                # Remove from history
                 self.history.undo()
                 restored += 1
                 status_label.configure(text=f"↩ Restored: {dst.name}")
-
-                # Update red area message
                 update_random_message()
-
             except Exception as e:
                 status_label.configure(text=f"❌ Failed: {dst.name}")
                 logging.error(f"Undo failed: {e}")
                 update_random_message()
-
-            # Update progress
             progress_bar.set(restored / total)
             progress_popup.update_idletasks()
-
-            # Schedule next
             self.after(50, undo_next)
-
-        # ====== Start Processing ======
         self.after(100, undo_next)
 
     def undo_rename(self):
-            item = self.history.undo()
-            if not item: return
-            try:
-                src = Path(item["new"])
-                dst = Path(item["old"])
-                dst.parent.mkdir(exist_ok=True)
-                shutil.move(str(src), str(dst))
-                self.status_label.configure(text=f"↩ Undo: {dst.name}")
-                self.update_info_bar()
-                self.scan_folder()
-            except Exception as e:
-                self.status_label.configure(text=f"❌ Undo failed: {e}")
+        item = self.history.undo()
+        if not item: return
+        try:
+            src = Path(item["new"])
+            dst = Path(item["old"])
+            dst.parent.mkdir(exist_ok=True)
+            shutil.move(str(src), str(dst))
+            self.status_label.configure(text=f"↩ Undo: {dst.name}")
+            self.update_info_bar()
+            self.scan_folder()
+        except Exception as e:
+            self.status_label.configure(text=f"❌ Undo failed: {e}")
 
     def redo_rename(self):
         item = self.history.redo()
@@ -2429,18 +2337,14 @@ class FileRenamerApp(ctk.CTk):
             self.status_label.configure(text=f"❌ Redo failed: {e}")
 
     def load_parties_csv(self):
-        # Show loading
         self.status_label.configure(text="🔄 Loading parties CSV...")
-        # Disable buttons
         self.reload_csv_btn.configure(state="disabled")
         self.scan_btn.configure(state="disabled")
         self.select_all_btn.configure(state="disabled")
-        # Update UI
         self.update_idletasks()
         csv_path = codes_dir / "parties.csv"
         if not csv_path.exists():
             try:
-                # Instead of writing manually, use the save function
                 self.party_map = {
                     "Creative": "2",
                     "Pranam Maheta": "7",
@@ -2453,9 +2357,7 @@ class FileRenamerApp(ctk.CTk):
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to create CSV: {e}")
                 self.party_map = {}
-                return
-
-        # Load CSV
+            return
         self.party_map = {}
         try:
             with open(csv_path, mode='r', encoding='utf-8') as f:
@@ -2488,10 +2390,8 @@ class FileRenamerApp(ctk.CTk):
         """Find the closest parent folder that is a known party (case-insensitive)"""
         current = path.parent
         while True:
-            # Check if this folder is a known party
             if current.name.lower() in [p.lower() for p in self.party_map]:
                 return current
-            # Stop if we've reached the root
             if str(current) == str(current.parent):
                 break
             current = current.parent
@@ -2514,7 +2414,6 @@ class FileRenamerApp(ctk.CTk):
         self.stop_auto_scan()
         if not self.selected_root:
             return
-
         class Handler(FileSystemEventHandler):
             def __init__(self, app):
                 self.app = app
@@ -2523,8 +2422,7 @@ class FileRenamerApp(ctk.CTk):
                     ext = Path(event.src_path).suffix.lower()
                     if ext in self.app.allowed_extensions:
                         self.app.after(0, self.app.scan_folder)
-
-        handler = Handler(self)  # ✅ Define handler here
+        handler = Handler(self)
         self.auto_observer = Observer()
         self.auto_observer.schedule(handler, str(self.selected_root), recursive=True)
         self.auto_observer.start()
@@ -2542,57 +2440,40 @@ class FileRenamerApp(ctk.CTk):
 
     def open_parties_editor(self):
         """Open UI to add/edit/delete parties without flicker or errors"""
-        # === Create popup and hide it until ready ===
         popup = ctk.CTkToplevel(self)
         popup.title("👥 Manage Party Codes")
         popup.geometry("500x500")
         popup.resizable(False, False)
         popup.transient(self)
         popup.grab_set()
-        popup.withdraw()  # Hide during setup
-
-        # Center popup
+        popup.withdraw()
         self.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() // 2) - 250
         y = self.winfo_y() + (self.winfo_height() // 2) - 250
         popup.geometry(f"+{int(x)}+{int(y)}")
-
-        # === Header ===
         ctk.CTkLabel(popup, text="Manage Party Codes", font=("Segoe UI", 18, "bold")).pack(pady=10)
-
-        # === Search Frame ===
         search_frame = ctk.CTkFrame(popup, fg_color="transparent")
         search_frame.pack(pady=(5, 0), padx=20, fill="x")
-
         ctk.CTkLabel(search_frame, text="🔍 Search:", font=("Segoe UI", 11)).pack(side="left")
         search_var = ctk.StringVar()
-        search_var.trace_add("write", lambda *args: refresh_list())  # ✅ Re-enable live search
+        search_var.trace_add("write", lambda *args: refresh_list())
         search_entry = ctk.CTkEntry(search_frame, textvariable=search_var, placeholder_text="Filter parties...")
         search_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
-
-        # === Scrollable List ===
         list_frame = ctk.CTkScrollableFrame(popup, height=250)
         list_frame.pack(pady=10, padx=20, fill="both", expand=True)
-        party_widgets = []  # Store (name, entry, delete_btn) to access later
-
+        party_widgets = []
         def refresh_list():
-            # Clear existing widgets
             for widget in list_frame.winfo_children():
                 widget.destroy()
             party_widgets.clear()
-
             query = search_var.get().strip().lower()
             filtered_parties = sorted([name for name in self.party_map.keys() if not query or query in name.lower()])
-
-            # Group by first letter
             groups = {}
             for name in filtered_parties:
                 first_letter = name[0].upper()
                 if first_letter not in groups:
                     groups[first_letter] = []
                 groups[first_letter].append(name)
-
-            # Add groups to UI
             for letter in sorted(groups.keys()):
                 ctk.CTkLabel(
                     list_frame,
@@ -2600,24 +2481,19 @@ class FileRenamerApp(ctk.CTk):
                     font=("Segoe UI", 12, "bold"),
                     text_color="cyan"
                 ).pack(anchor="w", padx=10, pady=(5, 0))
-
                 for name in groups[letter]:
                     inner_frame = ctk.CTkFrame(list_frame)
                     inner_frame.pack(fill="x", pady=2)
-
                     ctk.CTkLabel(inner_frame, text=name, width=180, anchor="w").pack(side="left", padx=5)
-
                     code_entry = ctk.CTkEntry(inner_frame, width=60, placeholder_text="Code")
                     code_entry.insert(0, self.party_map[name])
                     code_entry.pack(side="left")
-
                     def make_delete_handler(party_name=name, frame=inner_frame):
                         def handler():
                             if messagebox.askyesno("Delete Party", f"Delete '{party_name}'?"):
                                 del self.party_map[party_name]
                                 frame.destroy()
                         return handler
-
                     del_btn = ctk.CTkButton(
                         inner_frame,
                         text="🗑️",
@@ -2629,19 +2505,14 @@ class FileRenamerApp(ctk.CTk):
                     )
                     del_btn.pack(side="right")
                     party_widgets.append((name, code_entry, del_btn))
-
         refresh_list()
-
-        # === Add New Party ===
         add_frame = ctk.CTkFrame(popup)
         add_frame.pack(pady=10, padx=20, fill="x")
-
         ctk.CTkLabel(add_frame, text="Add New:").pack(side="left")
         add_name_entry = ctk.CTkEntry(add_frame, placeholder_text="Party Name")
         add_name_entry.pack(side="left", fill="x", expand=True, padx=5)
         add_code_entry = ctk.CTkEntry(add_frame, placeholder_text="Code", width=80)
         add_code_entry.pack(side="left")
-
         def add_party():
             name = add_name_entry.get().strip()
             code = add_code_entry.get().strip()
@@ -2658,16 +2529,11 @@ class FileRenamerApp(ctk.CTk):
             add_name_entry.delete(0, "end")
             add_code_entry.delete(0, "end")
             refresh_list()
-
         ctk.CTkButton(add_frame, text="Add", command=add_party).pack(side="left")
-
-        # === Buttons ===
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=10)
-
         def save_and_close():
             updated = False
-            # Collect all codes before destroying any widget
             updates = []
             for name, code_entry, _ in party_widgets:
                 try:
@@ -2676,19 +2542,14 @@ class FileRenamerApp(ctk.CTk):
                         updates.append((name, new_code))
                         updated = True
                 except Exception as e:
-                    # Ignore destroyed widgets
                     pass
-
-            # Apply updates
             for name, new_code in updates:
                 self.party_map[name] = new_code
-
             self.save_parties_csv()
             if updated:
                 self.scan_folder()
             popup.destroy()
             self.status_label.configure(text="✅ Parties saved")
-
         def reset_to_default():
             default_parties = {
                 "Creative": "2",
@@ -2701,18 +2562,13 @@ class FileRenamerApp(ctk.CTk):
             self.party_map.clear()
             self.party_map.update(default_parties)
             self.save_parties_csv()
-            refresh_list()  # Rebuilds UI safely
+            refresh_list()
             self.status_label.configure(text="🔄 Default parties restored")
-
         ctk.CTkButton(btn_frame, text="💾 Save & Close", command=save_and_close).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="🔄 Reset", command=reset_to_default).pack(side="left", padx=5)
-
-        # === Finalize Popup ===
-        popup.bind("<Return>", lambda e: add_party())  # Enter to add
+        popup.bind("<Return>", lambda e: add_party())
         search_entry.focus()
-        popup.deiconify()  # Show only when fully ready
-
-        # Optional: Keep reference to prevent garbage collection
+        popup.deiconify()
         self.current_popup = popup
 
     def save_parties_csv(self):
@@ -2727,6 +2583,221 @@ class FileRenamerApp(ctk.CTk):
             logging.info(f"✅ Saved {len(self.party_map)} parties to {csv_path}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save parties.csv:\n{e}")
+
+    # ✅ NEW: Master Move Function
+    def move_to_master_done(self):
+        if not self.file_path_list:
+            messagebox.showinfo("Master Move", "No finalized files found to move.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirm Master Move", 
+            f"Move {len(self.file_path_list)} finalized files to Master Done Folder?\n\n"
+            f"Only files with [ok] will be moved from all Party Done folders."
+        )
+        if not confirm:
+            return
+
+        # Create Master Done Folder at Root
+        master_done_path = self.selected_root / "Master_Done"
+        master_done_path.mkdir(exist_ok=True)
+
+        # ✅ Clear previous history before new move (for Undo functionality)
+        self.master_move_history = [] 
+
+        progress_popup = ctk.CTkToplevel(self)
+        progress_popup.title("Master Move Progress")
+        progress_popup.geometry("500x180")
+        progress_popup.resizable(False, False)
+        progress_popup.transient(self)
+        progress_popup.grab_set()
+        progress_popup.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        x = self.winfo_x() + (self.winfo_width() // 2) - 250
+        y = self.winfo_y() + (self.winfo_height() // 2) - 90
+        progress_popup.geometry(f"+{int(x)}+{int(y)}")
+
+        ctk.CTkLabel(progress_popup, text="Moving Files to Master Done...", font=TITLE_FONT).pack(pady=(10, 5))
+        status_label = ctk.CTkLabel(progress_popup, text="Starting...", font=FONT, wraplength=450)
+        status_label.pack(pady=5)
+        progress_bar = ctk.CTkProgressBar(progress_popup, width=400)
+        progress_bar.pack(pady=10)
+
+        file_list = self.file_path_list[:]
+        total = len(file_list)
+        moved_count = 0
+        error_count = 0
+        party_stats = {}  # Track files per party for summary
+
+        def process_next_file():
+            nonlocal moved_count, error_count, party_stats
+            if not file_list:
+                progress_popup.destroy()
+                self.scan_folder()
+                self.update_info_bar()
+                # ✅ Show Summary Popup Inline
+                self.show_move_summary(moved_count, error_count, party_stats, master_done_path)
+                return
+
+            file_path = file_list.pop(0)
+            try:
+                if not file_path.exists():
+                    status_label.configure(text=f"⚠️ Not found: {file_path.name}")
+                    error_count += 1
+                else:
+                    # ✅ Save Original Path for Undo
+                    original_path = str(file_path.resolve())
+                    
+                    # Identify Party for stats
+                    party_folder = self.find_party_folder(file_path)
+                    party_name = party_folder.name if party_folder else "Unknown"
+                    party_stats[party_name] = party_stats.get(party_name, 0) + 1
+
+                    # Move File
+                    dest_path = master_done_path / file_path.name
+                    counter = 1
+                    original_dest = dest_path
+                    while dest_path.exists():
+                        dest_path = master_done_path / f"{original_dest.stem} ({counter}){original_dest.suffix}"
+                        counter += 1
+                    
+                    shutil.move(str(file_path), str(dest_path))
+                    
+                    # ✅ Record the move for Undo
+                    self.master_move_history.append({
+                        "new": str(dest_path),
+                        "old": original_path
+                    })
+                    
+                    moved_count += 1
+                    status_label.configure(text=f"✅ Moved: {file_path.name}")
+            except Exception as e:
+                error_count += 1
+                status_label.configure(text=f"❌ Error: {file_path.name}")
+                logging.error(f"Master Move failed for {file_path}: {e}")
+
+            progress = moved_count + error_count
+            progress_bar.set(progress / total)
+            progress_popup.update_idletasks()
+            self.after(50, process_next_file)
+
+        self.after(100, process_next_file)
+
+
+    def undo_master_move(self):
+        if not self.master_move_history:
+            messagebox.showinfo("Undo Move", "No moves to undo.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirm Undo", 
+            f"Restore {len(self.master_move_history)} files to their original folders?\n\n"
+            f"This will move them out of Master_Done."
+        )
+        if not confirm:
+            return
+
+        progress_popup = ctk.CTkToplevel(self)
+        progress_popup.title("Undo Move Progress")
+        progress_popup.geometry("500x180")
+        progress_popup.resizable(False, False)
+        progress_popup.transient(self)
+        progress_popup.grab_set()
+
+        x = self.winfo_x() + (self.winfo_width() // 2) - 250
+        y = self.winfo_y() + (self.winfo_height() // 2) - 90
+        progress_popup.geometry(f"+{int(x)}+{int(y)}")
+
+        ctk.CTkLabel(progress_popup, text="Restoring Files...", font=TITLE_FONT).pack(pady=(10, 5))
+        status_label = ctk.CTkLabel(progress_popup, text="Starting...", font=FONT, wraplength=450)
+        status_label.pack(pady=5)
+        progress_bar = ctk.CTkProgressBar(progress_popup, width=400)
+        progress_bar.pack(pady=10)
+
+        # ✅ Process in Reverse Order
+        history_list = self.master_move_history[::-1] 
+        total = len(history_list)
+        restored_count = 0
+        error_count = 0
+
+        def process_next_undo():
+            nonlocal restored_count, error_count
+            if not history_list:
+                progress_popup.destroy()
+                self.master_move_history = []  # Clear history
+                self.scan_folder()
+                self.status_label.configure(text=f"↩ Undo Complete: {restored_count} restored")
+                self.update_info_bar()
+                return
+
+            item = history_list.pop(0)
+            try:
+                src = Path(item["new"])
+                dst = Path(item["old"])
+            
+                if not src.exists():
+                    status_label.configure(text=f"⚠️ Missing: {src.name}")
+                    error_count += 1
+                else:
+                    # Ensure original folder exists
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                
+                    # Handle conflict if original file exists
+                    if dst.exists():
+                        dst = dst.parent / f"{dst.stem}_restored{dst.suffix}"
+                
+                    shutil.move(str(src), str(dst))
+                    restored_count += 1
+                    status_label.configure(text=f"↩ Restored: {dst.name}")
+            except Exception as e:
+                error_count += 1
+                status_label.configure(text=f"❌ Error: {item['new']}")
+                logging.error(f"Undo move failed: {e}")
+
+            progress = restored_count + error_count
+            progress_bar.set(progress / total)
+            progress_popup.update_idletasks()
+            self.after(50, process_next_undo)
+
+        self.after(100, process_next_undo)
+
+    # ✅ NEW: Summary Popup
+    def show_move_summary(self, moved, errors, party_stats, dest_path):
+        """Helper method to show summary after Master Move"""
+        popup = ctk.CTkToplevel(self)
+        popup.title("📦 Master Move Summary")
+        popup.geometry("500x400")
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.grab_set()
+        
+        x = self.winfo_x() + (self.winfo_width() // 2) - 250
+        y = self.winfo_y() + (self.winfo_height() // 2) - 200
+        popup.geometry(f"+{int(x)}+{int(y)}")
+
+        ctk.CTkLabel(popup, text="✅ Move Complete!", font=("Segoe UI", 18, "bold"), text_color="#4cd964").pack(pady=10)
+        
+        info_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        info_frame.pack(pady=10, fill="x", padx=20)
+        
+        ctk.CTkLabel(info_frame, text=f"Total Moved: {moved}", font=FONT, anchor="w").pack(fill="x")
+        ctk.CTkLabel(info_frame, text=f"Errors: {errors}", font=FONT, anchor="w", text_color="red" if errors > 0 else "gray").pack(fill="x")
+        ctk.CTkLabel(info_frame, text=f"Destination: {dest_path.name}", font=FONT, anchor="w").pack(fill="x")
+        
+        ctk.CTkLabel(popup, text="📊 Files per Party:", font=("Segoe UI", 14, "bold")).pack(pady=(15, 5))
+        
+        list_frame = ctk.CTkScrollableFrame(popup, height=150)
+        list_frame.pack(pady=5, padx=20, fill="both", expand=True)
+        
+        for party, count in sorted(party_stats.items(), key=lambda x: x[1], reverse=True):
+            ctk.CTkLabel(
+                list_frame, 
+                text=f"{party}: {count} files", 
+                font=("Consolas", 11), 
+                anchor="w"
+            ).pack(fill="x", pady=1)
+            
+        ctk.CTkButton(popup, text="Close", command=popup.destroy, width=100).pack(pady=10)
 
     def on_closing(self):
         """Called when user closes the window"""
